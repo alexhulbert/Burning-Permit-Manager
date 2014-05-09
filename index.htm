@@ -1,0 +1,602 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+	<head>
+    	<title>Burning Permit Manager</title>
+		<meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <script type="text/javascript" src="config.cfg"></script>
+		<link type="text/css" rel="stylesheet" href="css/table.css">
+        <link type="text/css" rel="stylesheet" href="css/bootstrap.min.css">
+        <link href="css/bootstrap-theme.min.css" rel="stylesheet" type="text/css">
+        <link type="text/css" rel="stylesheet" href="css/datepicker.css">
+        <link type="text/css" rel="stylesheet" href="css/shepherd-theme-arrows.css">
+        <link type="text/css" rel="stylesheet" href="css/vex.css">
+        <link type="text/css" rel="stylesheet" href="css/vex-theme-os.css">
+        <link rel="icon" type="image/png" href="img/icon.png">
+        <style>
+			#printCanvas {
+				width: 100%;
+				height: 100%;
+				position: fixed !important;
+				-webkit-transform: translateZ(0);
+				overflow: hidden;
+				margin: 0 auto;
+			}
+			
+			#mapCanvas {
+				height: 90%;
+				width: 90%;
+				border: 4px solid rgba(0,0,0,.3);
+				border-radius: 20px;
+				overflow: hidden;
+				-webkit-mask-image: url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAAAA5JREFUeNpiYGBgAAgwAAAEAAGbA+oJAAAAAElFTkSuQmCC);
+			}
+			
+			#mapDiv {
+				text-align: center;
+			}
+			
+			#mapCanvas {
+				position: relative;
+				margin: 0 auto;
+			}
+			
+			.labels {
+				color: #000;
+				background-color: white !important;
+				font-size: 10px;
+				font-weight: bold;
+				text-align: center;
+				border: 2px solid black;
+				padding-right: 3px;
+				padding-left: 3px;
+				padding-top: 1px;
+				padding-bottom: 1px;
+		    }
+		   
+		    #dummy * {
+				position: absolute;
+				visibility: hidden;
+				height: auto;
+				width: auto;
+		    }
+			
+			#backFS {
+				position: fixed;
+				bottom: 1%;
+				right: 1%;
+				z-index: 1;
+			}
+			
+			@media print {
+				@page {
+					margin: 0;
+				}	
+				
+				#fullScreen, #resetBounds {
+					display: none;
+				}
+			}
+			
+			#table .htCore tbody tr:hover td {
+				background-color: #E7E8EF;
+			}
+		</style>
+        <style id="printfix"></style>
+        <script type="text/javascript" src="js/jquery-1.10.2.min.js"></script>
+        <script id="printref"></script>
+        <div id="mapRef">
+        </div>
+		<script type="text/javascript">
+			var mapRef = document.getElementById('mapRef');
+			function md() {
+				var mwlabel = document.createElement('script');
+				mwlabel.type = 'text/javascript';
+				var geojs = mwlabel.cloneNode();
+				mwlabel.src = 'js/markerwithlabel.js';
+				geojs.src = 'geo.js';
+				mapRef.appendChild(mwlabel);
+				mapRef.appendChild(geojs);
+			}
+			var script = document.createElement('script');
+			script.type = 'text/javascript';
+			var themejs = script.cloneNode();
+			themejs.src = 'themes/' + rules.colorScheme + '.js';
+			script.src = 'https://maps.googleapis.com/maps/api/js?sensor=false&callback=md&key=' + rules.APIKeys.googlemaps;
+			mapRef.appendChild(script);
+			mapRef.appendChild(themejs);
+        </script>
+        <script type="text/javascript" src="js/bootstrap.min.js"></script>
+		<script type="text/javascript" src="js/bootstrap-datepicker.js"></script>
+        <script type="text/javascript" src="js/shepherd.min.js"></script>
+        <script type="text/javascript" src="js/vex.combined.min.js"></script>
+		<script type="text/javascript" src="js/hot.js"></script>
+        <script type="text/javascript" src="hotlib.js"></script>
+        <script type="text/javascript" src="tour.js"></script>
+        <script type="text/javascript" src="wizard.js"></script>
+		<script>
+			var autoSave = true;
+			var dateCache = {};
+			var fsTether;
+			var rsTether;
+			var previousFocus = -1;
+			
+			function flush() {
+				dateCache = {};
+			}
+				
+			function ie() {
+				if (navigator.appName == 'Microsoft Internet Explorer') {
+					return true;
+				} else if (navigator.appName == 'Netscape') {
+					var r = RegExp("Trident/.*rv:([0-9]{1,}[\.0-9]{0,})");
+					return (r.exec(navigator.userAgent) != null);
+				}
+				return false;
+			}
+
+			function exitFullScreen() {
+				$('#fullScreen').css('display', 'block');
+				$('#resetBounds').css('display', 'block');
+				$('#main').css('display', 'block');
+				$('#printCanvas').css('display', 'none');
+				loadMap('mapCanvas', function(map) {
+					var c = map.getCenter();
+					google.maps.event.trigger(map, 'resize');
+					map.setCenter(c);
+					setTimeout(function() {
+						$('#backFS').css('display', 'none');
+					}, 1000);
+					fsTether.position();
+					rsTether.position();
+				});
+			}
+
+			function fullScreen() {
+				if (!isEmpty()) {
+					if (ie()) {
+						$('#fullScreen').css('display', 'none');
+						$('#resetBounds').css('display', 'none');
+						$('#main').css('display', 'none');
+						$('#printCanvas').css('display', 'block');
+						loadMap('printCanvas', function(map) {
+							var c = map.getCenter();
+							google.maps.event.trigger(map, 'resize');
+							map.setCenter(c);
+							setTimeout(function() {
+								$('#backFS').css('display', 'block');
+							}, 1000);
+						});
+					} else {
+						var element = document.getElementById("mapCanvas");
+						var requestMethod = 
+							element.requestFullScreen ||
+							element.webkitRequestFullScreen ||
+							element.mozRequestFullScreen ||
+							element.msRequestFullScreen;
+						
+						if (requestMethod) {
+							requestMethod.call(element);
+						} else if (typeof window.ActiveXObject !== "undefined") {
+							var wscript = new ActiveXObject("WScript.Shell");
+							if (wscript !== null) {
+								wscript.SendKeys("{F11}");
+							}
+						}
+					}
+				}
+			}
+			
+			function save_table(source) {
+				if (source === 'loadData' || !autoSave || isEmpty()) {
+					return;
+				} else {
+					var raw = getData();
+					raw.pop();
+					var b64json = JSON.stringify(raw, 4, '\t');
+					b64json = btoa(b64json).replace(/=/, '.').replace(/\//, '_');
+					$.ajax({
+						type: 'get',
+						url: 'arch.php',
+						data: { 
+							'data': b64json,
+							'date': $('#dateForm .form-control').attr('value')
+						}
+					});
+				}
+			}
+			
+			function getData() {
+				var data = $('#table').handsontable('getData');
+				var ret = [];
+				for (var i = 0; i < data.length; i++) {
+					ret[i] = data[i];
+				}
+				return ret;
+			}
+			
+			function loadTable() {
+				autoSave = ($('#dateForm .form-control').attr('value') == today() || $('#dateForm').data('datepicker').dates[0].valueOf() >= (new Date()).valueOf());
+				if ($('#dateForm .form-control').attr('value') != today() || hasToday()) {
+					var jsonInfo = get('bp_arch/' + $('#dateForm .form-control').attr('value') + '.json');
+					if (typeof jsonInfo === "string") {
+						jsonInfo = JSON.parse(jsonInfo); //Don't judge me...
+					}
+					$('#table').handsontable('loadData', jsonInfo);
+				} else {
+					$('#table').handsontable('loadData', null);
+				}
+				
+				if (rules.mapWithTable && !isEmpty()) {
+					loadMap();
+				}
+			}
+			
+			function dateCheck(c) {
+				if (typeof dateCache[c.toDateString()] !== "undefined") {
+					return dateCache[c.toDateString()];
+				} else {
+					var d = day(c);
+					if (d != today()) {
+						var jsonExists = (get('bp_arch/' + d + '.json') != "");
+						dateCache[c.toDateString()] = jsonExists;
+						return jsonExists;
+					} else {
+						return '';
+					}
+				}
+			}
+			
+			function hasToday() {
+				return (get('bp_arch/' + today() + '.json') != "");
+			}
+			
+			function today() {
+				var today = new Date();
+				var dd = today.getDate();
+				var mm = today.getMonth() + 1;
+				var yyyy = today.getFullYear();
+				if (dd < 10) {
+					dd='0' + dd;
+				}
+				
+				if (mm<10) {
+					mm='0' + mm;
+				}
+				
+				return mm+'-'+dd+'-'+yyyy;	
+			}
+			
+			function day(today) {
+				var dd = today.getDate();
+				var mm = today.getMonth() + 1;
+				var yyyy = today.getFullYear();
+				if (dd < 10) {
+					dd='0' + dd;
+				}
+				
+				if (mm<10) {
+					mm='0' + mm;
+				}
+				
+				return mm+'-'+dd+'-'+yyyy;	
+			}
+			
+			function align_divs() {
+				var divHeightDesktop = window.innerHeight - ($('#header').height() + $('#buttons').height() + 30);
+				var divHeightMobile = window.innerWidth*0.75 - 30;
+				if (($('#mapDiv').width() + $('#tableDiv').width()) > window.innerWidth) {
+					$('#mapDiv').height(divHeightMobile);
+				} else {
+					$('#mapDiv').height(divHeightDesktop);
+				}
+				fsTether = new Tether({
+					element: document.getElementById('fullScreen'),
+					target: document.getElementById('mapCanvas'),
+					attachment: 'bottom right',
+					targetAttachment: 'bottom right',
+					optimizations: {
+						moveElement: false
+					}
+				});
+				
+				rsTether = new Tether({
+					element: document.getElementById('resetBounds'),
+					target: document.getElementById('mapCanvas'),
+					attachment: 'bottom left',
+					targetAttachment: 'bottom left',
+					optimizations: {
+						moveElement: false
+					}
+				});
+			}
+			
+			function isEmpty() {
+				return $('#table').handsontable('countEmptyRows') == $('#table').handsontable('countRows');
+			}
+			
+			function date_init() {
+				var df = $('#dateForm');
+				df.attr('data-date', today());
+				$('.form-control').attr('value', today());
+				df.datepicker({
+					beforeShowDay: rules.prior ? $.noop : dateCheck,
+					todayBtn: "linked"
+				}).on('changeDate', function(ev) {
+					$('.form-control').attr('value', day(ev.date));
+				});
+				$('#mapLoad').removeClass('active');
+				df.datepicker('setValue', today());
+				autoSave = true;
+				loadTable();
+			}
+			
+			function setCookie(name, value, days) {
+				if (days) {
+					var date = new Date();
+					date.setTime(date.getTime()+(days*24*60*60*1000));
+					var expires = "; expires="+date.toGMTString();
+				}
+				else var expires = "";
+				document.cookie = name+"="+value+expires+"; path=/";
+			}
+			
+			function getCookie(name) {
+				var nameEQ = name + "=";
+				var ca = document.cookie.split(';');
+				for(var i=0;i < ca.length;i++) {
+					var c = ca[i];
+					while (c.charAt(0)==' ') c = c.substring(1,c.length);
+					if (c.indexOf(nameEQ) == 0) return c.substring(nameEQ.length,c.length);
+				}
+				return null;
+			}
+			
+			function loadMap(n, callback) {
+				if (typeof n === "undefined") {
+					var n = "mapCanvas";
+				}
+				var data = getData();
+				if (isEmpty()) {
+					alert('Please enter one or more address into the table.');
+				} else {
+					data.pop();
+					clearMap();
+					var map = drawMap(n, rules.location.zoomLevel, coords(rules.location.latitude, rules.location.longitude));
+					setMap(map);
+					var places = [];
+					for (var i = 0; i < data.length; i++) {
+						places[i] = rules.useMapquest ? {} : data[i][0];
+						if (rules.useMapquest) {
+							places[i].street = data[i][0];
+						}
+						
+						if (data[i][1] != null && data[i][1] != "") {
+							if (rules.useMapquest) {
+								places[i].city = data[i][1];
+							} else {
+								places[i] += ",+" + data[i][1];
+							}
+						}
+						
+						if (data[i][2] != null && data[i][2] != "") {
+							if (rules.useMapquest) {
+								places[i].state = data[i][2];
+							} else {
+								places[i] += ",+" + data[i][2];
+							}
+						} else {
+							if (rules.useMapquest) {
+								places[i].state = rules.defaults.state;
+							} else {
+								places[i] += ",+" + rules.defaults.state;
+							}
+						}
+					}
+					
+					var funct = rules.useMapquest ? geolocate : geolocate_gmaps;
+					funct(places, function(index, point) {
+						var description = (data[index][0] != null && data[index][0] != "") ? (data[index][0] + "<br>") : "";
+						
+						if (data[index][3] != null && data[index][3] != "") {
+							description += "Name: ";
+							description += data[index][3];
+						}
+						addMarker(map, point, 'img/icon.png', description);
+						if (index == (places.length - 1)) {
+							plot(map);
+							if (typeof callback !== "undefined") {
+								callback(map);
+							}
+						}
+					});
+				}
+			}
+			
+			window.onload = function() {
+				if (!rules.experimentalPrint) {
+					$('#mapPrint').attr('onclick', 'print();');
+				} else {
+					$('#printref').attr({
+						type: "text/javascript",
+						src: "print.js"
+					});
+				}
+				
+				$('#table').handsontable({
+					data: [["", "", "", "", ""]],
+					minSpareRows: 1,
+				    colHeaders: true,
+				    contextMenu: true,
+					afterChange: save_table,
+					currentRowClassName: 'currentRow',
+  					currentColClassName: 'currentCol',
+					overflow: scroll, 
+					beforeChange: _beforeChange,
+					cells: _cells,
+					colWidths: [150, 100, 50, 110, 110],
+  					colHeaders: ["Address", "City", "State", "Name", "Phone #"],
+					fillHandle: true,
+					columns: [
+						{}, 
+						{},
+						{
+							type: 'dropdown',
+							source: getStates(),
+							allowInvalid: true
+						},
+						{},
+						{
+							validator: /^\(?([0-9]{3}?)\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})$/,
+							allowInvalid: true
+						}
+				  	]
+				});
+				date_init();
+				align_divs();
+				if (getCookie('tutorial') != "true") {
+					tutorial();
+					setCookie('tutorial', "true", 365*50);
+				}
+				if (rules.prior) {
+					$('#addMap').remove();
+				}
+				if (ie() && rules.experimentalPrint) {
+					var m = "Sorry, dynamic printing is not available for Internet Explorer.\\nTry using another browser such as Chrome.";
+					$('#mapPrint').attr('onclick', 'alert(\'' + m + '\');');
+				} else if (typeof InstallTrigger !== "undefined") {
+					$('head').append('\
+					<style>\
+						.shepherd-content header, .shepherd-content footer, .shepherd-text {\
+							border-left: 1px solid black;\
+							border-right: 1px solid black;\
+						}\
+						.shepherd-content footer {\
+							border-bottom: 1px solid black;\
+						}\
+						.shepherd-content header {\
+							border-top: 1px solid black;\
+						}\
+						.shepherd-element-attached-bottom .shepherd-content:before {\
+							border-top-color: black !important;\
+						}\
+						.shepherd-element-attached-left .shepherd-content:before {\
+							border-right-color: black !important;\
+						}\
+						.shepherd-element-attached-right .shepherd-content:before {\
+							border-left-color: black !important;\
+						}\
+					</style>\
+					');
+					if (rules.experimentalPrint) {
+						$('#mapPrint').attr('onclick', "if(!isEmpty()){mozPrint('mapPrint', 'main', 'printCanvas');}");
+					}
+					$('#mapPrint').button('reset');
+					$('#tutorial').button('reset');
+				}
+				
+				$('#table .htCore tbody tr').mouseover(function() {
+					var c = $(this).index();
+					if (typeof normalBounds !== 'undefined' && c < markers.length && normalBounds != null && (rules.focusLevel != false)) {
+						if (c != previousFocus) {
+							zoom(c);
+						}
+						previousFocus = c;
+					}
+				});
+				
+				$('#table .htCore tbody tr').mouseleave(function() {
+					if (typeof normalBounds !== 'undefined' && normalBounds != null && $(this).index() < markers.length && (rules.focusLevel != false)) {
+						previousFocus = -1;
+						unZoom();
+					}
+				});
+				
+				if (rules.useMapquest) {
+					$('#credits').css('margin-top', '-20px;');
+					$('#credits ul').append('<li><a href="http://developer.mapquest.com/">Mapquest Geocoding API</a></li>');
+				}
+			};
+			
+			window.onresize = function(e) {
+				var divHeightDesktop = window.innerHeight - ($('#header').height() + $('#buttons').height() + 30);
+				var divHeightMobile = window.innerWidth*0.75 - 30;
+				if (($('#mapDiv').width() + $('#tableDiv').width()) > window.innerWidth) {
+					$('#mapDiv').height(divHeightMobile);
+				} else {
+					$('#mapDiv').height(divHeightDesktop);
+				}
+				fsTether.position();
+				rsTether.position();
+			}
+		</script>
+        <div id="markers"></div>
+	</head>
+	<body>
+    	<div id="dummy"></div>
+        <button id="backFS" class="btn btn-default" style="display: none;" onclick="exitFullScreen();"><i class="glyphicon glyphicon-remove"></i></button>
+        <div id="printCanvas" style="display: none"></div>
+		<div class="container" id="main">
+			<div class="row" id="header">
+            <h1 align="center" id="title">Burning Permit Manager <button id="tutorial" class="btn btn-info" data-loading-text='<i class="glyphicon glyphicon-remove"></i>' onclick="tutorial();"><i class="glyphicon glyphicon-info-sign"></i></button></h1>
+            <h2><br></h2>
+			</div>
+            <div class="row" id="contents">
+            	<div class="col-md-7" id="tableDiv">
+                	<br><br>
+                    <div id="table"></div>
+                    <br><br>
+                </div>
+                <div class="col-md-5" id="mapDiv">
+                	<div id="mapCanvas"></div>
+                    <button class="btn btn-default" onclick="fullScreen();" id="fullScreen"><span class="glyphicon glyphicon-fullscreen"></span></button>
+					<button class="btn btn-warning" onclick="resetZoom();" id="resetBounds"><span class="glyphicon glyphicon-remove-circle"></span></button>
+                </div>
+            </div>
+            <div class="row" id="buttons">
+            	<div class="col-md-4">
+                	<br>
+                    <button class="btn btn-lg btn-default btn-block" id="mapGen" onclick="loadMap();">Generate Map</button>
+                    <br>
+                    <button class="btn btn-lg btn-primary btn-block" id="mapPrint" onclick="if(!isEmpty()){printMap('mapPrint', 'main', 'printCanvas');}">Print Map</button>
+                </div>
+                <div class="col-md-4" id="credits">
+                	<h6><br><em>
+                    	Powered by:
+                        <ul>
+                        	<li><a href="https://developers.google.com/maps/">Google Maps API v3</a></li>
+                            <li><a href="http://handsontable.com/">Handsontable Spreadsheet Scaffolding</a></li>
+                            <li><a href="http://jquery.com/">jQuery</a></li>
+                            <li><a href="http://getbootstrap.com/">Twitter Bootstrap</a></li>
+                            <li><a href="http://www.eyecon.ro/bootstrap-datepicker/">Bootstrap Datepicker</a></li>
+                            <li><a href="http://github.hubspot.com/shepherd/">Shepherd</a></li>
+                            <li><a href="http://github.hubspot.com/vex/">Vex Message Boxes</a></li>
+                        </ul>
+                        
+                        ~Taconut
+                    </em><br>[1475 lines of source]</h6>
+                </div>
+                <div class="col-md-4">
+                	<br>
+                   	<div class="input-group input-group-lg date" id="dateForm" data-date-format="mm-dd-yyyy">
+  						<span class="input-group-btn add-on" id="dateButton">
+                        	<button class="btn btn-default" type="button">
+								<i class="glyphicon glyphicon-calendar"></i>
+                            </button>
+                        </span>
+                        <input class="form-control" type="text" value="" readonly>
+                        <span class="input-group-btn" style=""><br>
+
+                        	<button class="btn btn-success" type="button" id="addMap" onClick="addMap();">
+								<i class="glyphicon glyphicon-plus-sign"></i>
+                            </button>
+                        </span>
+					</div>
+                    <br>
+                    <button class="btn btn-lg btn-default btn-block" id="mapLoad" onclick="loadTable();">
+                    	Load Map
+                    </button>
+                </div>
+           	</div>
+		</div>
+	</body>
+</html>
